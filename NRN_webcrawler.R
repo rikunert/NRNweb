@@ -1,226 +1,254 @@
 #This program looks at the properties of references in the journal nature reviews neuroscience (NRN)
-#The aim is to establish that NRN suffers from a recency bias, i.e. that the older a paper is, the less it is cited in NRN
 
 #(c) Richard Kunert 
 #For questions please e-mail RiKunert at gmail dot com
 
-#set working directory to where publications_1975-2012.csv is
-setwd("C:/Users/Richard/Desktop/Psychology_UvA/R")
+###################################################################################################
+# load libraries
 
-#############################################
-# load libraries needed for html-tree parsing 
-require(RCurl)
-options(RCurlOptions = list(useragent = "zzzz"));
-require(XML)
+if(!require(RCurl)){install.packages('RCurl')} #html-tree parsing
+library(RCurl)
+options(RCurlOptions = list(useragent = "zzzz"))
+
+if(!require(XML)){install.packages('XML')} #html-tree parsing
+library(XML)
+
+if(!require(Hmisc)){install.packages('Hmisc')}# correlations
+library(Hmisc)
+
+if(!require(MASS)){install.packages('MASS')}# robust correlations
+library(MASS)
+
+if(!require(psychometric)){install.packages('psychometric')}# robust correlations
+library(psychometric)
 
 ###################################################################################################
-#All the webpages to be loaded need to be pre-processed in the same way, create a function for that
-webpage_preprocessing = function(webpage_address)
-{
-  #load the webpage
-  webpage_nodes <- try(getURL(webpage_address))#sometimes this function throws an error called 'transfer closed with outstanding read data remaining', I believe it is to do with a suboptimal internet connection
-  # Process escape characters
-  webpage_nodes <- readLines(tc <- textConnection(webpage_nodes)); close(tc)
-  # Parse the html tree, ignoring errors on the page
-  pagetree <- htmlTreeParse(webpage_nodes, error=function(...){}, useInternalNodes = TRUE)
+# custom functions
+
+#web_pre takes a webpage of address web_add and pre-processes it
+#input: website address
+#output: parsed html tree
+
+web_pre = function(web_add){
+  
+  web_nod <- getURL(web_add)#load the webpage
+  
+  #sometimes error called 'transfer closed with outstanding read data remaining'
+  #probably due to suboptimal internet connection.
+  
+  web_nod <- readLines(tc <- textConnection(web_nod))# Process escape characters
+  close(tc)
+  
+  tree <- htmlTreeParse(web_nod, error=function(...){}, useInternalNodes = TRUE)# Parse the html tree, ignoring errors on the page
   
   return(pagetree)#the parsed html tree is returned
 }
 
-#################################
-#get all the NRN issues' webpages
-NRN_index = webpage_preprocessing('http://www.nature.com/nrn/archive/index.html')
-#extract nodes of interest (those whose class attribute is 'issue')
-issues_nodes = getNodeSet(NRN_index,'//p[@class="issue"]/*')
-#extract the value of the href-attributes for the nodes in issues_nodes
-issues_addresses = sapply(issues_nodes,xmlGetAttr,"href")
+###################################################################################################
+# extract all relevant data from NRN (Nature Reviews Neuroscience)
 
-##############################################################################################################
-#Loop through all the issues and within each issue through all the reviews and extract relevant reference data
+#find NRN-issues' web addresses
+NRN_ind = web_pre('http://www.nature.com/nrn/archive/index.html')#extract NRN index
+iss_nod = getNodeSet(NRN_ind, '//p[@class="issue"]/*')#issue nodes (those whose class attribute is 'issue')
+iss_add = sapply(iss_nod, xmlGetAttr, "href")#issues' web addresses (value of the href-attributes for the nodes in iss_nod)
 
-#Initialise some variables
-NRNdata_name = list();
-NRNdata_pubyear = numeric(1000);#preallocate for speed
-NRNdata_startyear = numeric(1000);#preallocate for speed
-NRNdata_endyear = numeric(1000);#preallocate for speed
-NRNdata_refyears_raw = rep(-1,1e+7);#preallocate for speed (I fill the vector with an impossible number: -1, this way even zeros can be meaningful)
-NRNdata_refyears_adjusted = rep(-1,1e+7);#preallocate for speed (I fill the vector with an impossible number: -1, this way even zeros can be meaningful)
-counter_pubyear = 0;
-counter_refyears = 0;
-for(i in 1:length(issues_addresses)){#for every issue of NRN
+#loop through every issue and extract relevant data
+
+##preallocate for variables for speed
+NRNdat_name = list();
+NRNdat_pubyear = numeric(1000);#
+NRNdat_startyear = numeric(1000);#
+NRNdat_endyear = numeric(1000);#
+NRNdat_refyears_raw = rep(-1, 1e+7);#initially filled with impossible number: -1, this way even zeros can be meaningful
+NRNdat_refyears_adj = rep(-1, 1e+7);#initially filled with impossible number: -1, this way even zeros can be meaningful
+counter_rev = 0;
+counter_ref = 0;
+
+for(i in 1:length(iss_add)){#for every issue of NRN
   
-  issue = webpage_preprocessing(paste(c("http://www.nature.com",issues_addresses[i],"index.html#rv")
-                                      , sep="", collapse=""))#note that this address focusses on reviews through '#rv'
-  # Find all the nodes indicative of a full-text link
-  reviews_nodes = getNodeSet(issue,'//li[@class="full-text"]/*')
-  #extract the value of the attribute href in each revew node, this value is the webpage of the review article
-  reviews_addresses = sapply(reviews_nodes,xmlGetAttr,"href")
+  #find individual reviews' web addresses in this issue of NRN
+  iss = web_pre(paste(c("http://www.nature.com", iss_add[i], "index.html#rv"), sep="", collapse=""))#preprocess review web address (notice '#rv')  
+  rev_nod = getNodeSet(iss, '//li[@class="full-text"]/*')#nodes indicative of a full-text link  
+  rev_add = sapply(reviews_nod, xmlGetAttr, "href")#reviews' web addresses (value of the href-attributes for the nodes in rev_nod)
   
-  for(r in 1:length(reviews_addresses))#for every review of this issue
-  {    
+  for(r in 1 : length(reviews_addresses)){#for every review of this issue    
     
-    if(regexpr('uidfinder',reviews_addresses[r])>0){#if the link on the issues page is to a finder function, webpage_preprocessing doesn't work. In this case construct correct webpage as follows:
-      current_address = paste(c("http://www.nature.com",issues_addresses[i],"full/",
-                                substr(reviews_addresses[r],regexpr('nrn',reviews_addresses[r]),nchar(reviews_addresses[r]))
-                                , ".html")
-                              , sep="", collapse="")
-    }else{#if link on issues page is not to a uidfinder site
-      current_address = paste(c("http://www.nature.com",reviews_addresses[r],"")
-                              , sep="", collapse="")
+    #Construction of this issue's web-address is complicated
+    #by the fact that sometimes the link on the issues page
+    #points to a finder function.
+    if(regexpr('uidfinder',rev_add[r]) > 0){#finder function case
+      
+      add = paste(c("http://www.nature.com",iss_add[i],"full/",
+                                substr(rev_add[r], regexpr('nrn', rev_add[r]), nchar(rev_add[r])), ".html"),
+                                sep="", collapse="")
+      
+    }else{#not the finder function case
+      
+      add = paste(c("http://www.nature.com", rev_add[r], ""), sep="", collapse="")
+      
     }
     
-    review = webpage_preprocessing(current_address)
-    # Find all the nodes in the reference section which include the crucial reference info
-    references = getNodeSet(review,'//p[@class="details"]')
+    rev = web_pre(add)#parse html tree of this review        
+    ref = getNodeSet(review, '//p[@class="details"]')#relevant info about references (nodes in the reference section with class attribute details)
     
-    if(length(references)>0) {#if there are actually any references in this review, some perspective articles are without references and thus throw an error
-      # Find all the nodes in the reference section which include a publication year 
-      #careful, the first one is the publication date of the article, conveniently, it returns a NA because it includes a month
-      #Look for nodes in references of the form span with attribute class ='cite-month-year', extract the values; do this with each node you find
-      years_raw = xpathApply(references[[1]], '//span[@class="cite-month-year"]', xmlValue)
-      refyears = as.numeric(years_raw)#turn years_raw into numbers  
-      pubyear = as.numeric(substr(years_raw[[1]],nchar(years_raw[[1]])-5,nchar(years_raw[[1]])-1))#publication year of this review    
+    #Fill variables initialised earlier. However, this only makes sense if there is relevant information.
+    if(length(ref) > 0) {#if there are actually any references in this review
+            
+      years_raw = xpathApply(ref[[1]], '//span[@class="cite-month-year"]', xmlValue)#for each node in ref: look for span with attribute class ='cite-month-year', extract the values
+      #Note: the first node with year is the publication date of the review. Conveniently, it returns a NA because it includes a month.
+      refyears  = as.numeric(years_raw)#turn years_raw into numbers
+      pubyear   = as.numeric(substr(years_raw[[1]], nchar(years_raw[[1]])-5, nchar(years_raw[[1]]) - 1))#publication year of this review
       
       #save data for visualisation and analysis later
-      NRNdata_name = c(NRNdata_name, current_address)
-      NRNdata_pubyear[counter_pubyear] = pubyear
-      NRNdata_refyears_raw[(counter_refyears+1):(counter_refyears+length(refyears))]=refyears
-      NRNdata_refyears_adjusted[(counter_refyears+1):(counter_refyears+length(refyears))] = (pubyear - refyears)
-      NRNdata_startyear[counter_pubyear] = counter_refyears+1
-      NRNdata_endyear[counter_pubyear] = counter_refyears+length(refyears)
-      counter_pubyear = counter_pubyear+1    
-      counter_refyears = counter_refyears+length(refyears)
+      NRNdat_name                                                                = c(NRNdat_name, add)#add webaddress of this review
+      NRNdat_pubyear[counter_rev]                                                = pubyear#publication year of this review
+      NRNdat_refyears_raw[(counter_ref + 1) : (counter_ref + length(refyears))]  = refyears#publication years of the references in this review
+      NRNdat_refyears_adj[(counter_ref + 1) : (counter_ref + length(refyears))]  = (pubyear - refyears)#age of references at review publication
+      NRNdat_startyear[counter_rev]                                              = counter_ref + 1#index of this review's first reference
+      NRNdat_endyear[counter_rev]                                                = counter_ref + length(ref)#index of this review's last reference
+      
+      #update counters
+      counter_rev = counter_rev + 1    
+      counter_ref = counter_ref + length(refyears)
       
     }else {print('No references found in:')}
-    
-    
+        
     #display publication years just so that the user knows where we are in the programme
-    print(current_address)
+    print(add)
     print(pubyear)
+    
   }
 }
 
-###############################
-#Visualise and Analyse the data
+###################################################################################################
+# visualise data
+#to be done
 
-#is there pressure to include less and less references?
-layout(1)#one plot in the middle of the screen
-y = diff(NRNdata_startyear[NRNdata_startyear>0]) - 1#the number of references in each issue, minus one because first number is year of review itself
-x = 1:length(y)#number of review
-plot(x,y, xlab='Review #', ylab = 'References')#scatter plot
-text(770,280, sprintf('r = %.2f (p= %.3f)', cor(x,y), cor.test(x,y,method = 'pearson')$p.value))#info box with strength and significance of association, p-value is rounded
-abline(lm(y~x))#bet fit line
+###################################################################################################
+# visualise data
 
-#Raw histogram of publication years in all references of NRN
-layout(1)
-xlimits = c(2012,1800)#note that most recent year is on left, this is done to ensure comparability with the following plots
-hist(NRNdata_refyears_raw[NRNdata_refyears_raw>min(xlimits)],
-     xlab='Publication year', main = "Raw Publication Year Histogram",
-     ylab='Frequency',col = 'green',xlim=xlimits, breaks = abs(xlimits[1]-xlimits[2]))
+########################################################
+#prepare general look (very clean)
 
-#Histogram of age of references in NRN
-layout(1)
-xlimits = c(0, 50)
-h = hist(NRNdata_refyears_adjusted[NRNdata_refyears_adjusted<max(xlimits) & NRNdata_refyears_adjusted>-1],
-         xlab='Publication Age', main = "Publication Year Histogram adjusted for Review Publication Time",
-         ylab='Frequency',col = 'green',xlim=xlimits, breaks = abs(xlimits[1]-xlimits[2]))
+theme_set(theme_bw(18)+#remove gray background, set font-size
+            theme(axis.line = element_line(colour = "black"),
+                  panel.grid.major = element_blank(),
+                  panel.grid.minor = element_blank(),
+                  panel.background = element_blank(),
+                  panel.border = element_blank(),
+                  legend.key = element_blank(),
+                  legend.title = element_blank(),#remove all sorts of lines for a cleaner look
+                  legend.position = 'top',#specify the legend to be on top
+                  legend.direction = 'vertical'))#specify the legend to be arranged vertically
 
-#Histogram of publication rate in Neuroscience
-layout(1)
-adj = read.csv('publications_1975-2012.csv')#found through WoS search
-bp1 = barplot(as.double(adj[37:1,6])*1000, main = 'Neuroscience Publication rate', ylab = 'Count', xlab = 'Year',
-              ylim = c(0,50000), axes = T)# all publications
-bp2 = barplot(as.double(adj[37:1,11])*1000, main = 'Neuroscience Publication rate', ylab = 'Count', xlab = 'Year',
-              col = 'white', add = T, ylim = c(0,10000))# reviews
-axis(1, at = bp1[seq(1, 37, 5)], labels=adj[seq(37,1,-5),1])#add x-axis ticks
+########################################################
+#FIGURE 1: development of number of references over time
 
+#prepare data
+y = diff(NRNdat_startyear[NRNdat_startyear>0]) - 1#the number of references in each issue, minus one because first number is year of review itself
+x = 1:length(y)
+dat_corr = data.frame("x" = 1:length(y),#x-axis: number of review
+                      "y" = y)#y-axis
 
-#Development of age of references in NRN - within each publication
-layout(matrix(1:10,2,5))#organise the histograms in a 2x6 array
-percentile = seq(0,100,10)#Matlab code = 1:10:100
-age = 1:49;
-xlimits = c(0, 50)
-coefficients = numeric()
-for(p in 1:10){#for every plot, i.e every decile
+fig1 = ggplot(dat_corr, aes(x = x, y = y))+
+  geom_point(size = 2) +#add points
+  stat_smooth(method = "lm", size = 2, se = FALSE,
+              aes(colour = "least squares regression")) +
+  stat_smooth(method = "rlm", size = 2, se = FALSE,
+              aes(colour = "robust regression")) +
+  labs(x = "Number of review", y = "Reference count") +#axis labels
+  scale_color_grey()+#colour scale for lines
+  stat_smooth(method = "lm", size = 2, se = FALSE,
+              aes(colour = "least squares regression"),
+              lty = 2) +
+  stat_smooth(method = "lm", size = 2, se = FALSE,
+              aes(colour = "least squares regression"),
+              lty = 2)
+
+#add annotation
+Pea_r = rcorr(dat_corr$x, dat_corr$y, type = "pearson")
+Spe_r = rcorr(dat_corr$x, dat_corr$y, type = "spearman")
+text_plotting = data.frame(x = Inf, y = -0.1,
+                           t = sprintf("Pearson r = %s\nSpearman rho = %s",
+                                       gsub("0\\.","\\.", sprintf('%1.2f', Pea_r$r[1,2])),#r-value without trailing zero
+                                       gsub("0\\.","\\.", sprintf('%1.2f', Spe_r$r[1,2]))),#rho-value without trailing zero
+                           hjust = 1, vjust = 0.5)
+fig1 = fig1 + 
+  geom_text(data = text_plotting,
+            aes(x=x,y=y,hjust=hjust, vjust = vjust, label=t),
+            size = 5)#annotation
+
+fig1
+
+########################################################                    
+#FIGURE 2: distribution of the age of referred to scholarly articles
+
+dat_hist = data.frame("x" = NRNdata_refyears_adj[
+  NRNdata_refyears_adj < 50 &
+    NRNdata_refyears_adj > -1])#x-axis: age of referred to scholarly articles (within sensible range)
+
+fig2 = ggplot(dat_hist, aes(x=x)) +
+  geom_histogram(color = "black", fill = "gray50") +#add histogram
+  labs(x = "Age of reference", y = "Count")+ #add axis titles
+  scale_x_continuous(limits = c(0, 50)) +#restrict x-axis range
+  ggtitle(" ")#add title
+
+fig2
+
+########################################################                    
+#FIGURE 3: distribution of the age of referred to scholarly articles in different parts of each review
+
+layout(matrix(1:4, 1, 4))#organise the histograms in a 1x4 array
+coefficients = numeric()#model fit coefficients
+
+for(p in 1:4){#for every plot, i.e every quarter in a review
   
-  NRN_data_seyear_percentile_length = (NRNdata_endyear-NRNdata_startyear)/length(percentile)  
+  NRN_dat_ref_count = (NRNdat_endyear - NRNdat_startyear) / 4#number of references in this quarter
   
-  data_region_extracted = numeric()
-  for(x in 1:length(NRN_data_seyear_percentile_length)){#for each review
+  NRNdat_startendyear = numeric()
+  
+  for(r in 1 : length(NRN_dat_ref_count)){#for each review
     
-    data_region_extracted_x = (NRNdata_startyear[x] + NRN_data_seyear_percentile_length[x]*(p-1)):
-      (NRNdata_startyear[x] + NRN_data_seyear_percentile_length[x]*p)#this review's indexes for this decile
+    NRNdat_startendyear_r = (NRNdat_startyear[r] + NRN_dat_ref_count[r] * (p-1)):
+      (NRNdat_startyear[r] + NRN_dat_ref_count[r] * p)#this review's indexes for this quarter
     
-    data_region_extracted = c(data_region_extracted, data_region_extracted_x)
+    NRNdat_startendyear = c(NRNdat_startendyear, NRNdat_startendyear_r)#append to other reviews
   }
   
-  refyears_adjusted_extracted = NRNdata_refyears_adjusted[data_region_extracted]#subset of NRNdata_refyears_adjusted indicated by data_region_extracted
-  data_region = which(refyears_adjusted_extracted<max(xlimits) & refyears_adjusted_extracted>-1)#indexing of interest
+  refyears_adj_ext = NRNdat_refyears_adj[NRNdat_startendyear]#subset of reference ages which are in this quarter
+
+  dat_hist = data.frame("x" = refyears_adj_ext[
+    NRNdata_refyears_adj_ext < 50 &
+      NRNdata_refyears_adj_ext > -1])#x-axis: age of referred to scholarly articles (within sensible range)
   
-  h = hist(refyears_adjusted_extracted[data_region],
-           xlab='Publication Age', main = as.character(percentile[p]),
-           ylab='Frequency',col = 'green',xlim=xlimits, ylim =c(0,2000), breaks = abs(xlimits[1]-xlimits[2]))
+  fig3x = ggplot(dat_hist, aes(x = x)) +
+    geom_histogram(color = "black", fill = "gray50", binwidth = 1) +#add histogram
+    labs(x = "Age of reference", y = "Count")+ #add axis titles
+    scale_x_continuous(limits = c(0, 50)) +#restrict x-axis range
+    scale_y_continuous(limits = c(0, 2000)) +#restrict x-axis range
+    ggtitle(sprintf("Quarter within review: %d", p))#add title
   
-  #add a little statistical analysis and display the result in the plot
-  #I tried out some models, and without fail the following was the best one
-  m1 = lm(h$counts~log(age))#P(publication) as a function of age
+  #add model fit
+  age = 1 : 49
+  h = hist(refyears_adj_ext[refyears_adj_ext < max(50) & refyears_adj_ext > -1], breaks = 50)#histogram function provides bin counts
+  m1 = lm(h$counts ~ log(age))#model bin counts as a function of reference logged age (log-model is best fitting model after trying out a few)  
+  pred = predict(m1, interval="conf", newdata=data.frame(age))  
   
-  pred=predict(m1,interval="conf",newdata=data.frame(age))  
-  lines(age,pred[,1],lty=2,col = 'red')
+  fig3x = fig3x + 
+    geom_line(x = age, y = pred[1], linetype = 3, colour = "gray50")
+  
+  fig3x
   
   #save for next step
   coefficients = c(coefficients, coefficients(summary(m1))[2])
 }
 
-#Development of age of references in NRN - within each publication (model-based summary)
-layout(1)#organise the histograms in a 2x6 array
-plot(coefficients, xlab = 'decile', ylab = 'decline rate')
 
-#Development of age of references in NRN - over the years adjusted for publication rate in each year
-adj = read.csv('publications_1975-2012.csv')
-layout(matrix(1:12,2,6))#organise the histograms in a 2x6 array
-year = 2000:2011#only full years considered
-age = 1:26
-
-for(p in 1:12){#for every plot
-  
-  xlimits = c(0, 25)
-  
-  data_region_range = min(NRNdata_startyear[NRNdata_pubyear == year[p]]):max(NRNdata_endyear[NRNdata_pubyear == year[p]])#range of indexes in NRNdata_refyears of interest for this histogram
-  refyears_adjusted_range = NRNdata_refyears_adjusted[data_region_range]
-  refyears_raw_range = NRNdata_refyears_raw[data_region_range]
-  data_region = which(refyears_adjusted_range<max(xlimits) & refyears_adjusted_range>-1)  
-  
-  adjusted_count_total=numeric()
-  count_total = numeric()
-  for(y in year[p]:(year[p]-25)) {
-    adjusted_count = sum(refyears_raw_range[data_region]==y,na.rm = T)/(adj[adj[,1]==y,6]*1000)
-    adjusted_count_total = c(adjusted_count_total, adjusted_count)
-    count = sum(refyears_raw_range[data_region]==y,na.rm = T)
-    count_total = c(count_total, count)
-  }
-  
-  bp = barplot(adjusted_count_total,
-               xlab='Publication Age', main = as.character(year[p]),
-               ylab='P(Cited)',col = 'blue',xlim=xlimits, ylim=c(0,0.08))
-  axis(1,at = bp[seq(1, 25, 5)], labels=seq(0,24,5))#add x-axis ticks
-  
-  #add a little statistical analysis and display the result in the plot
-  #Here the best model is differnet between different plots, so one of the two best contenders is chosen
-  m1 = lm(adjusted_count_total~age)#P(publication) as a function of age
-  m2 = lm(adjusted_count_total~age+I(age^2))#P(publication) as a function of age and age squared
-  
-  if(anova(m1,m2)$'Pr(>F)'[2]<.05 & summary(m1)$r.squared < summary(m2)$r.squared){#if polynomial model is significantly better than linear model
-    text(10,0.060, labels = sprintf('Best fit: \npolynomial model. \nRsq = %.2f\n f(P)=%.2f+\n(%.4f*age)+\n(%.4f*(age^2) \np=%.2f, p=%.2f',
-                                    summary(m2)$r.squared, coefficients(m2)[1],coefficients(m2)[2], coefficients(m2)[3],coef(summary(m2))[11], coef(summary(m2))[12])         
-         , col = 'black')
-    pred=predict(m2,interval="conf",newdata=data.frame(age))
-    
-  }else{#if both models equally good or linear model even better
-    text(10,0.060, labels = sprintf('Best fit: \nlinear model. \nRsq = %.2f\n f(P)=%.2f+\n(%.4f*age) \np=%.2f',
-                                    summary(m1)$r.squared, coefficients(m1)[1],coefficients(m1)[2],coef(summary(m1))[8])
-         , col = 'black')
-    pred=predict(m1,interval="conf",newdata=data.frame(age))    
-  }  
-  lines(age,pred[,1],lty=2,col = 'green')
-}
+########################################################                    
+#FIGURE 4: development of model fit coefficient ('decline rate') over parts of reviews
+dat_vis = data.frame(x = 1:4, y = coefficients)
+fig4 = ggplot(dat_vis, aes(x = x, y = y)) +
+  stat_smooth(method = "loess", size = 2, se = FALSE) +#add loess line (a smooth fit)
+  geom_point(size = 2) +#add points
+  labs(x = "Quarter within review", y = "Decline rate") +#axis labels
+  scale_color_grey()#colour scale for lines
