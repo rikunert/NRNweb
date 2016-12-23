@@ -133,7 +133,7 @@ for(p in 1:4){#for every plot, i.e every quarter in a review
   
   #add model fit
   age = 1 : 49
-  h = hist(refyears_adj_ext[refyears_adj_ext < max(50) & refyears_adj_ext > -1], breaks = 50);#histogram function provides bin counts
+  h = hist(refyears_adj_ext[refyears_adj_ext < max(50) & refyears_adj_ext > -1], breaks = 50, plot = F);#histogram function provides bin counts
   m1 = lm(h$counts ~ log(age))#model bin counts as a function of reference logged age (log-model is best fitting model after trying out a few)  
   pred = predict(m1, interval="conf", newdata=data.frame(age))    
   dat_mod = data.frame(age = age, pred = pred[,1])
