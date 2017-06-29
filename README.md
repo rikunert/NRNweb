@@ -12,3 +12,5 @@ Data were visualised using the R-script NRN_webcrawler_vis.R . Resulting figures
 
 # Write-up
 The blog post was written up using a R-markdown script called NRN_post_brainsidea.Rmd . The final version was published on Brain's Idea [here](https://brainsidea.wordpress.com/2017/01/05/how-to-write-a-nature-style-review/).
+
+@rikunert
